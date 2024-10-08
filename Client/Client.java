@@ -1,3 +1,5 @@
+import org.w3c.dom.ls.LSOutput;
+
 import javax.swing.*;
 import java.awt.*;
 import java.io.*;
@@ -6,6 +8,7 @@ import java.net.Socket;
 public class Client {
     private static final String SERVER_IP = "127.0.0.1";
     private static final int PORT = 6789;
+    private IncomingReader incomingReader; // Declaración de la variable
 
     private Socket socket;
     private PrintWriter out;
@@ -79,8 +82,9 @@ public class Client {
             in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
             out = new PrintWriter(socket.getOutputStream(), true);
 
-            // Hilo para recibir mensajes del servidor
-            new Thread(new IncomingReader()).start();
+            // Crear e iniciar el hilo para recibir mensajes del servidor
+            incomingReader = new IncomingReader(); // Instanciar IncomingReader
+            new Thread(incomingReader).start(); // Iniciar el hilo
 
             // Solicitar nombre de usuario
             requestUserName();
@@ -156,10 +160,12 @@ public class Client {
     }
 
     private class IncomingReader implements Runnable {
+        private volatile boolean isRunning = true; // Variable para controlar el estado del hilo
+
         public void run() {
             try {
                 String message;
-                while ((message = in.readLine()) != null) {
+                while (isRunning && (message = in.readLine()) != null) {
                     // Mostrar mensajes de otros usuarios
                     if (!message.startsWith(clientName + ":")) {
                         displayMessage(message, false); // Mostrar mensajes de otros usuarios en el lado izquierdo
@@ -168,11 +174,23 @@ public class Client {
             } catch (IOException e) {
                 e.printStackTrace();
             } finally {
-                // Cierra la ventana al desconectarse
-                closeConnection();
+                closeConnection(); // Cierra la ventana al desconectarse
+            }
+        }
+
+        // Método para detener el hilo de lectura
+        public void stop() {
+            isRunning = false; // Cambia el estado para detener el bucle
+            try {
+                if (in != null) {
+                    in.close(); // Cierra el BufferedReader
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
             }
         }
     }
+
 
     // Método para cerrar la conexión y la ventana
     private void closeConnection() {
@@ -187,25 +205,22 @@ public class Client {
     private void disconnect() {
         System.out.println("Desconectando...");
         try {
-            // Interrumpir el hilo de entrada antes de cerrar la conexión
-            Thread.currentThread().interrupt(); // Interrumpe el hilo que ejecuta IncomingReader
-
             if (socket != null) {
                 out.println(clientName + " ha salido."); // Notificar al servidor que el usuario ha salido
-                in.close();
-                out.close();
-                socket.close();
+                incomingReader.stop(); // Detener el hilo de lectura
+                socket.close(); // Cerrar el socket
+                System.out.println("se cerro");
             }
         } catch (IOException e) {
             e.printStackTrace();
         } finally {
             SwingUtilities.invokeLater(() -> {
                 System.out.println("Cerrando ventana...");
-
                 frame.dispose(); // Cerrar la ventana inmediatamente
             });
         }
     }
+
 
     public static void main(String[] args) {
         Client client = new Client();

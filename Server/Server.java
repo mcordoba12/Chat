@@ -126,7 +126,17 @@ public class Server {
 
                 // Manejo de mensajes de los clientes
                 String message;
-                while ((message = in.readLine()) != null) {
+                while (!Thread.currentThread().isInterrupted()) {
+                    // Verificar si el socket está cerrado antes de leer
+                    if (socket.isClosed()) {
+                        break; // Salir del bucle si el socket está cerrado
+                    }
+                    message = in.readLine(); // Intentar leer el mensaje
+
+                    if (message == null) {
+                        // Si el mensaje es nulo, el servidor cerró la conexión
+                        break;
+                    }
                     if (message.startsWith("@")) {
                         // Mensaje privado
                         int spaceIndex = message.indexOf(' ');
@@ -141,10 +151,15 @@ public class Server {
                     }
                 }
             } catch (IOException e) {
-                e.printStackTrace();
+                // Manejar la excepción de conexión
+                System.out.println("Conexión cerrada: " + e.getMessage());
+                Thread.currentThread().interrupt(); // Interrumpir el hilo
             } finally {
+                // Cerrar el socket y limpiar recursos
                 try {
-                    socket.close();
+                    if (socket != null && !socket.isClosed()) {
+                        socket.close();
+                    }
                 } catch (IOException e) {
                     e.printStackTrace();
                 }
@@ -154,6 +169,7 @@ public class Server {
                 clientNames.remove(clientName);
             }
         }
+
 
         // Método para enviar un mensaje a un cliente específico
         private void sendPrivateMessage(String targetName, String message) {
