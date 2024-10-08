@@ -3,14 +3,14 @@ import java.net.*;
 import java.util.*;
 import javax.swing.*;
 import java.awt.*;
-import javax.swing.text.*; // Para StyledDocument
+import javax.swing.text.*;
 
 public class Server {
 
     private static Set<PrintWriter> writers = new HashSet<>();
-    private static JTextPane textArea; // Usar JTextPane para formateo de texto
-    private static Map<String, PrintWriter> clientWriters = new HashMap<>(); // Almacena nombres de clientes y sus escritores
-    private static Set<String> clientNames = new HashSet<>(); // Para almacenar nombres de clientes
+    private static JTextPane textArea;
+    private static Map<String, PrintWriter> clientWriters = new HashMap<>();
+    private static Set<String> clientNames = new HashSet<>();
 
     public static void main(String[] args) {
         int PORT = 6789;
@@ -21,40 +21,40 @@ public class Server {
         textArea.setEditable(false);
 
         // Configuración de diseño estético
-        textArea.setBackground(Color.PINK);  // Fondo rosado
-        textArea.setBorder(BorderFactory.createLineBorder(Color.WHITE, 5));  // Borde blanco
-        textArea.setMargin(new Insets(10, 10, 10, 10)); // Márgenes en el área de texto
+        textArea.setBackground(Color.PINK);
+        textArea.setBorder(BorderFactory.createLineBorder(Color.WHITE, 5));
+        textArea.setMargin(new Insets(10, 10, 10, 10));
 
         // Etiqueta de título
         JLabel titleLabel = new JLabel("Servidor", SwingConstants.CENTER);
-        titleLabel.setFont(new Font("Arial", Font.BOLD, 36)); // Fuente grande y en negrita
-        titleLabel.setForeground(Color.WHITE); // Color del texto
-        titleLabel.setBackground(Color.PINK); // Fondo rosado
-        titleLabel.setOpaque(true); // Permitir que el fondo sea visible
+        titleLabel.setFont(new Font("Arial", Font.BOLD, 36));
+        titleLabel.setForeground(Color.WHITE);
+        titleLabel.setBackground(Color.PINK);
+        titleLabel.setOpaque(true);
 
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         frame.setLayout(new BorderLayout());
 
-        frame.add(titleLabel, BorderLayout.NORTH); // Añadir el título en la parte superior
+        frame.add(titleLabel, BorderLayout.NORTH);
         frame.add(new JScrollPane(textArea), BorderLayout.CENTER);
 
         // Fondo rosado para toda la ventana
         frame.getContentPane().setBackground(Color.PINK);
 
         // Establecer tamaño mínimo y preferido de la ventana
-        frame.setSize(800, 600); // Tamaño inicial de la ventana
-        frame.setMinimumSize(new Dimension(600, 400)); // Tamaño mínimo de la ventana
+        frame.setSize(800, 600);
+        frame.setMinimumSize(new Dimension(600, 400));
 
         frame.pack();
         frame.setVisible(true);
 
         try {
             ServerSocket serverSocket = new ServerSocket(PORT);
-            appendToTextArea("Servidor iniciado. Esperando clientes...", Color.BLUE, Font.ITALIC); // Mensaje de inicio
+            appendToTextArea("Servidor iniciado. Esperando clientes...", Color.BLUE, Font.ITALIC);
 
             while (true) {
                 Socket clientSocket = serverSocket.accept();
-                appendToTextArea("Nuevo cliente conectado: " + clientSocket, Color.GREEN, Font.PLAIN); // Mensaje de nuevo cliente
+                appendToTextArea("Nuevo cliente conectado: " + clientSocket, Color.GREEN, Font.PLAIN);
 
                 // Crea el objeto Runnable
                 ClientHandler clientHandler = new ClientHandler(clientSocket);
@@ -80,7 +80,7 @@ public class Server {
                 StyleConstants.setBold(attrs, fontStyle == Font.BOLD);
 
                 doc.insertString(doc.getLength(), message + "\n", attrs);
-                textArea.setCaretPosition(doc.getLength()); // Desplazar hacia abajo
+                textArea.setCaretPosition(doc.getLength());
             } catch (BadLocationException e) {
                 e.printStackTrace();
             }
@@ -112,6 +112,7 @@ public class Server {
                         continue;
                     }
                     clientNames.add(name);
+                    clientName = name;
                     break;
                 }
 
@@ -121,24 +122,26 @@ public class Server {
                     clientWriters.put(name, out);
                 }
 
-                appendToTextArea(name + " se ha unido.", Color.MAGENTA, Font.BOLD); // Mensaje de conexión
-                broadcast(name + " se ha conectado."); // Notificar a todos los clientes
+                appendToTextArea(name + " se ha unido.", Color.MAGENTA, Font.BOLD);
+                broadcast(name + " se ha conectado.");
 
                 // Manejo de mensajes de los clientes
                 String message;
                 while (!Thread.currentThread().isInterrupted()) {
-                    // Verificar si el socket está cerrado antes de leer
                     if (socket.isClosed()) {
-                        break; // Salir del bucle si el socket está cerrado
-                    }
-                    message = in.readLine(); // Intentar leer el mensaje
-
-                    if (message == null) {
-                        // Si el mensaje es nulo, el servidor cerró la conexión
                         break;
                     }
-                    if (message.startsWith("@")) {
-                        // Mensaje privado
+                    message = in.readLine();
+
+                    if (message == null) {
+                        break;
+                    }
+
+                    if (message.startsWith("AUDIO:")) {
+                        String audioBase64 = message.substring(6);
+                        appendToTextArea(name + " ha enviado un audio.", Color.BLUE, Font.ITALIC);
+                        broadcastExceptSender("AUDIO:" + audioBase64, out);
+                    } else if (message.startsWith("@")) {
                         int spaceIndex = message.indexOf(' ');
                         if (spaceIndex > 1) {
                             String targetName = message.substring(1, spaceIndex);
@@ -146,14 +149,14 @@ public class Server {
                             sendPrivateMessage(targetName, name + " (privado): " + privateMessage);
                         }
                     } else {
-                        appendToTextArea(name + ": " + message, Color.BLACK, Font.PLAIN); // Mensaje normal
-                        broadcast(name + ": " + message); // Reenviar mensaje a todos los clientes
+                        appendToTextArea(name + ": " + message, Color.BLACK, Font.PLAIN);
+                        broadcast(name + ": " + message);
                     }
                 }
             } catch (IOException e) {
                 // Manejar la excepción de conexión
                 System.out.println("Conexión cerrada: " + e.getMessage());
-                Thread.currentThread().interrupt(); // Interrumpir el hilo
+                Thread.currentThread().interrupt();
             } finally {
                 // Cerrar el socket y limpiar recursos
                 try {
@@ -167,9 +170,10 @@ public class Server {
                     writers.remove(out);
                 }
                 clientNames.remove(clientName);
+                broadcast(clientName + " ha salido.");
+                appendToTextArea(clientName + " ha salido.", Color.RED, Font.BOLD);
             }
         }
-
 
         // Método para enviar un mensaje a un cliente específico
         private void sendPrivateMessage(String targetName, String message) {
@@ -186,6 +190,17 @@ public class Server {
             synchronized (writers) {
                 for (PrintWriter writer : writers) {
                     writer.println(message);
+                }
+            }
+        }
+
+        // Método para reenviar mensajes a todos excepto al remitente
+        private void broadcastExceptSender(String message, PrintWriter senderOut) {
+            synchronized (writers) {
+                for (PrintWriter writer : writers) {
+                    if (writer != senderOut) {
+                        writer.println(message);
+                    }
                 }
             }
         }
