@@ -8,6 +8,8 @@ import java.io.*;
 import java.net.*;
 import java.util.ArrayList;
 import java.util.List;
+import java.net.Socket;
+import java.util.Base64;
 
 
 public class Client {
@@ -33,6 +35,8 @@ public class Client {
     private String clientName;
     private JFrame callFrame;
     private JLabel callStatusLabel;
+    private AudioRecorder audioRecorder;
+    private boolean isRecording = false; // Estado de grabación
 
     private ArrayList<String> availableUsers = new ArrayList<>();
 
@@ -46,6 +50,8 @@ public class Client {
         callButton = new JButton("Llamar"); // Inicializar el botón de llamada
         audioButton = new JButton("Audio"); // Inicializar el botón de audio
 
+        audioRecorder = new AudioRecorder();
+        
         messagePanel.setLayout(new BoxLayout(messagePanel, BoxLayout.Y_AXIS)); // Usar BoxLayout para apilar mensajes verticalmente
         JScrollPane scrollPane = new JScrollPane(messagePanel);
         scrollPane.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_ALWAYS);
@@ -105,6 +111,8 @@ public class Client {
 
         } catch (IOException e) {
             e.printStackTrace();
+            JOptionPane.showMessageDialog(frame, "No se pudo conectar al servidor.", "Error", JOptionPane.ERROR_MESSAGE);
+            System.exit(1);
         }
     }
 
@@ -320,32 +328,85 @@ public class Client {
         }
     }
 
-    private void sendAudio() {
-        // Implementa la lógica para enviar audio
-        JOptionPane.showMessageDialog(frame, "Enviando audio...");
-        // Aquí puedes agregar la lógica específica para el envío de audio
+
+     private void toggleRecording() {
+        if (!isRecording) {
+            // Iniciar grabación
+            try {
+                audioRecorder.startRecording();
+                isRecording = true;
+                audioButton.setText("Detener Grabación");
+                displaySystemMessage("Grabación iniciada...");
+            } catch (LineUnavailableException ex) {
+                ex.printStackTrace();
+                JOptionPane.showMessageDialog(frame, "No se pudo acceder al micrófono.", "Error", JOptionPane.ERROR_MESSAGE);
+            }
+        } else {
+            // Detener grabación y enviar audio
+            byte[] audioData = audioRecorder.stopRecording();
+            isRecording = false;
+            audioButton.setText("Grabar Audio");
+            displaySystemMessage("Grabación detenida.");
+
+            // Convertir los bytes de audio a Base64 para enviarlos como string
+            String audioBase64 = Base64.getEncoder().encodeToString(audioData);
+            sendAudioMessage(audioBase64);
+        }
     }
+
+    private void sendAudioMessage(String audioBase64) {
+        // Enviar el mensaje con un prefijo especial para identificar que es un audio
+        out.println("AUDIO:" + audioBase64);
+        // Mostrar una indicación en la interfaz
+        displayMessage("Has enviado un audio.", true);
+    }
+
+
 
     // Método para mostrar los mensajes en burbujas
     private void displayMessage(String message, boolean isOwnMessage) {
         JPanel messageBubble = new JPanel();
-        JLabel messageLabel = new JLabel(message);
+        JLabel messageLabel;
         messageBubble.setLayout(new BorderLayout());
+        messageBubble.setBorder(BorderFactory.createEmptyBorder(5, 10, 5, 10));
+        messageBubble.setMaximumSize(new Dimension(300, 100));
 
         // Configurar colores y alineación según sea propio o de otro usuario
         if (isOwnMessage) {
-            messageBubble.setBackground(new Color(255, 182, 193)); // Rosado claro para los mensajes propios
+            messageBubble.setBackground(new Color(255, 182, 193));// Rosado claro para los mensajes propios
+            messageLabel = new JLabel("<html>" + message + "</html>");
             messageLabel.setHorizontalAlignment(SwingConstants.RIGHT);
             messageBubble.add(messageLabel, BorderLayout.EAST);
         } else {
-            messageBubble.setBackground(new Color(240, 240, 240)); // Gris claro para mensajes recibidos
-            messageLabel.setHorizontalAlignment(SwingConstants.LEFT);
-            messageBubble.add(messageLabel, BorderLayout.WEST);
+            if (message.startsWith("AUDIO:")) {
+                // Mensaje de audio
+                String audioBase64 = message.substring(6); // Extraer los datos de audio
+
+                // Crear un botón de reproducción con un icono de triángulo
+                JButton playButton = new JButton("▶");
+                playButton.setFocusPainted(false);
+                playButton.setMargin(new Insets(5, 5, 5, 5));
+                playButton.setPreferredSize(new Dimension(50, 30));
+
+                // Agregar ActionListener para reproducir el audio cuando se haga clic
+                playButton.addActionListener(new ActionListener() {
+                    @Override
+                    public void actionPerformed(ActionEvent e) {
+                        playAudio(audioBase64);
+                    }
+                });
+
+                // Añadir el botón al panel del mensaje
+                messageBubble.setBackground(new Color(240, 240, 240)); // Gris claro para mensajes recibidos
+                messageBubble.add(playButton, BorderLayout.WEST);
+            } else {
+                messageBubble.setBackground(new Color(240, 240, 240)); // Gris claro para mensajes recibidos
+                messageLabel = new JLabel("<html>" + message + "</html>");
+                messageLabel.setHorizontalAlignment(SwingConstants.LEFT);
+                messageBubble.add(messageLabel, BorderLayout.WEST);
         }
 
-        messageBubble.setBorder(BorderFactory.createEmptyBorder(5, 10, 5, 10)); // Espaciado
-        messageBubble.setMaximumSize(new Dimension(300, 30)); // Limitar el tamaño de las burbujas
-
+       
         // Añadir la burbuja al panel de mensajes
         messagePanel.add(messageBubble);
         messagePanel.revalidate();
@@ -355,6 +416,65 @@ public class Client {
         JScrollBar vertical = ((JScrollPane) messagePanel.getParent().getParent()).getVerticalScrollBar();
         vertical.setValue(vertical.getMaximum());
     }
+
+     private void displaySystemMessage(String message) {
+        JPanel messageBubble = new JPanel();
+        JLabel messageLabel = new JLabel("<html><i>" + message + "</i></html>");
+        messageBubble.setLayout(new BorderLayout());
+
+        messageBubble.setBackground(new Color(255, 255, 224)); // Amarillo claro
+        messageLabel.setHorizontalAlignment(SwingConstants.CENTER);
+        messageBubble.add(messageLabel, BorderLayout.CENTER);
+
+        messageBubble.setBorder(BorderFactory.createEmptyBorder(5, 10, 5, 10));
+        messageBubble.setMaximumSize(new Dimension(300, 30));
+
+        messagePanel.add(messageBubble);
+        messagePanel.revalidate();
+        messagePanel.repaint();
+
+        JScrollBar vertical = ((JScrollPane) messagePanel.getParent().getParent()).getVerticalScrollBar();
+        vertical.setValue(vertical.getMaximum());
+    }
+
+
+     private void playAudio(String audioBase64) {
+        byte[] audioData = Base64.getDecoder().decode(audioBase64);
+
+        new Thread(() -> {
+            try {
+                // Configurar el formato de audio (debe coincidir con el formato de grabación)
+                AudioFormat format = new AudioFormat(16000, 16, 2, true, true);
+                InputStream byteArrayInputStream = new ByteArrayInputStream(audioData);
+                AudioInputStream audioInputStream = new AudioInputStream(byteArrayInputStream, format, audioData.length / format.getFrameSize());
+
+                // Obtener una línea de reproducción
+                DataLine.Info info = new DataLine.Info(SourceDataLine.class, format);
+                SourceDataLine speakers = (SourceDataLine) AudioSystem.getLine(info);
+                speakers.open(format);
+                speakers.start();
+
+                // Buffer para reproducir el audio
+                byte[] buffer = new byte[4096];
+                int bytesRead;
+                while ((bytesRead = audioInputStream.read(buffer, 0, buffer.length)) != -1) {
+                    speakers.write(buffer, 0, bytesRead);
+                }
+
+                // Finalizar la reproducción
+                speakers.drain();
+                speakers.close();
+                audioInputStream.close();
+
+                // Opcional: Mostrar una indicación de que se ha reproducido el audio
+                displaySystemMessage("Has reproducido un audio.");
+            } catch (LineUnavailableException | IOException e) {
+                e.printStackTrace();
+                displaySystemMessage("Error al reproducir el audio.");
+            }
+        }).start();
+    }
+    
 
     private class IncomingReader implements Runnable {
         private volatile boolean isRunning = true; // Variable para controlar el estado del hilo
@@ -376,6 +496,9 @@ public class Client {
                         JOptionPane.showMessageDialog(frame, "Call was rejected.");
                     } else if (message.equals("END_CALL")) {
                         handleCallEnded();
+                    } else if (message.startsWith("AUDIO:")) {
+                        // Mensaje de audio
+                        displayMessage(message, false);
                     }
                     else if (!message.startsWith(clientName + ":")) {
                         displayMessage(message, false); // Mostrar mensajes de otros usuarios en el lado izquierdo
@@ -444,7 +567,7 @@ public class Client {
                 out.println(clientName + " ha salido."); // Notificar al servidor que el usuario ha salido
                 incomingReader.stop(); // Detener el hilo de lectura
                 socket.close(); // Cerrar el socket
-                System.out.println("se cerro");
+                System.out.println("se cerró la conexión");
             }
         } catch (IOException e) {
             e.printStackTrace();
