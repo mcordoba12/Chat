@@ -160,7 +160,12 @@ public class Server {
                             String privateMessage = message.substring(spaceIndex + 1);
                             sendPrivateMessage(targetName, name + " (privado): " + privateMessage);
                         }
-                    } else if(message.equals("GET_AVAILABLE_USERS")){
+                    } else  if (message.startsWith("AUDIO:")) {
+                        String audioBase64 = message.substring(6);
+                        appendToTextArea(name + " ha enviado un audio.", Color.BLUE, Font.ITALIC);
+                        broadcastExceptSender("AUDIO:" + audioBase64, out);
+                    }
+                    else if(message.equals("GET_AVAILABLE_USERS")){
                         sendAvailableUsers();
                     }else if (message.startsWith("CALL_REQUEST:")) {
                         String targetName = message.substring("CALL_REQUEST:".length());
@@ -197,6 +202,8 @@ public class Server {
                     writers.remove(out);
                 }
                 clientNames.remove(clientName);
+                broadcast(clientName + " ha salido.");
+                appendToTextArea(clientName + " ha salido.", Color.RED, Font.BOLD);
 
 
                 synchronized ((availableUsers)){
@@ -301,6 +308,17 @@ public class Server {
             synchronized (writers) {
                 for (PrintWriter writer : writers) {
                     writer.println(message);
+                }
+            }
+        }
+
+         // Método para reenviar mensajes a todos excepto al remitente
+        private void broadcastExceptSender(String message, PrintWriter senderOut) {
+            synchronized (writers) {
+                for (PrintWriter writer : writers) {
+                    if (writer != senderOut) {
+                        writer.println(message);
+                    }
                 }
             }
         }
