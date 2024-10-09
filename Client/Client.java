@@ -4,11 +4,14 @@ import javax.swing.*;
 import java.awt.*;
 import java.io.*;
 import java.net.Socket;
+import java.util.ArrayList;
+import java.util.List;
 
 public class Client {
     private static final String SERVER_IP = "127.0.0.1";
     private static final int PORT = 6789;
     private IncomingReader incomingReader; // Declaración de la variable
+
 
     private Socket socket;
     private PrintWriter out;
@@ -21,6 +24,8 @@ public class Client {
     private JButton callButton; // Botón para llamar
     private JButton audioButton; // Botón para audio
     private String clientName;
+
+    private ArrayList<String> availableUsers = new ArrayList<>();
 
     public Client() {
         // Configuración de la interfaz gráfica
@@ -119,8 +124,73 @@ public class Client {
 
     private void makeCall() {
         // Implementa la lógica para hacer una llamada
-        JOptionPane.showMessageDialog(frame, "Llamando a otro usuario...");
-        // Aquí puedes agregar la lógica específica de la llamada
+
+       // openParticipantsPopup();
+
+        out.println("GET_AVAILABLE_USERS");
+
+        // Wait a bit for the server to respond
+        try {
+            Thread.sleep(100);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+
+        if (availableUsers.isEmpty()) {
+            JOptionPane.showMessageDialog(frame, "No users available for calling.");
+            return;
+        }
+
+        String[] options = availableUsers.toArray(new String[0]);
+
+        JPanel panel = new JPanel(new GridLayout(0, 1)); // Grid layout with one column
+        List<JCheckBox> checkBoxes = new ArrayList<>();
+
+        for (String user : options) {
+            JCheckBox checkBox = new JCheckBox(user);
+            checkBoxes.add(checkBox);
+            panel.add(checkBox);
+        }
+
+        int result = JOptionPane.showConfirmDialog(frame, panel, "Select users to call", JOptionPane.OK_CANCEL_OPTION);
+
+        if (result == JOptionPane.OK_OPTION) {
+            // Collect selected users
+            List<String> selectedUsers = new ArrayList<>();
+            for (JCheckBox checkBox : checkBoxes) {
+                if (checkBox.isSelected()) {
+                    selectedUsers.add(checkBox.getText());
+                }
+            }
+
+            if (!selectedUsers.isEmpty()) {
+                // Send a call request for each selected user
+                for (String user : selectedUsers) {
+                    out.println("CALL_REQUEST:" + user);
+                    JOptionPane.showMessageDialog(frame, "Calling " + user + "...");
+                }
+            } else {
+                JOptionPane.showMessageDialog(frame, "No users selected.");
+            }
+        }
+
+    }
+
+    public static void openParticipantsPopup(){ // para elegir a cuales personas quieres llamar
+        JFrame popupFrame = new JFrame("Select participants to call:");
+        popupFrame.setSize(300,500);
+        popupFrame.setLayout(new FlowLayout());
+
+        JLabel popupLabel = new JLabel("Select participants to call:");
+        popupFrame.add(popupLabel);
+
+       // this.out.println("getClientNames");
+       // Set<String> participants = Server.getClientNames();
+
+
+
+
+
     }
 
     private void sendAudio() {
@@ -167,7 +237,11 @@ public class Client {
                 String message;
                 while (isRunning && (message = in.readLine()) != null) {
                     // Mostrar mensajes de otros usuarios
-                    if (!message.startsWith(clientName + ":")) {
+                    System.out.printf("received message "+message);
+                    if (message.startsWith("AVAILABLE_USERS:")) {
+                        updateAvailableUSers(message.substring("AVAILABLE_USERS:".length()));
+                    }
+                    else if (!message.startsWith(clientName + ":")) {
                         displayMessage(message, false); // Mostrar mensajes de otros usuarios en el lado izquierdo
                     }
                 }
@@ -187,6 +261,16 @@ public class Client {
                 }
             } catch (IOException e) {
                 e.printStackTrace();
+            }
+        }
+    }
+
+    private void updateAvailableUSers(String userListString){
+        availableUsers.clear();
+        String[] users = userListString.split(",");
+        for(String user: users){
+            if(!user.isEmpty() && !user.equals(clientName)){
+                availableUsers.add(user);
             }
         }
     }

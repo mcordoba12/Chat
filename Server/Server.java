@@ -11,6 +11,7 @@ public class Server {
     private static JTextPane textArea; // Usar JTextPane para formateo de texto
     private static Map<String, PrintWriter> clientWriters = new HashMap<>(); // Almacena nombres de clientes y sus escritores
     private static Set<String> clientNames = new HashSet<>(); // Para almacenar nombres de clientes
+    private static Set<String> availableUsers = new HashSet<>();
 
     public static void main(String[] args) {
         int PORT = 6789;
@@ -104,6 +105,10 @@ public class Server {
                 in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
                 out = new PrintWriter(socket.getOutputStream(), true);
 
+
+
+                broadcastAvailableUsers();
+
                 // Lógica para manejar el nombre del cliente
                 String name;
                 while (true) {
@@ -111,18 +116,25 @@ public class Server {
                     if (name == null || clientNames.contains(name)) {
                         continue;
                     }
+                    clientName = name;
                     clientNames.add(name);
                     break;
                 }
 
                 // Guardar el escritor del cliente
                 synchronized (writers) {
+
                     writers.add(out);
                     clientWriters.put(name, out);
                 }
 
+                synchronized (availableUsers){
+                    availableUsers.add(clientName);
+                }
+
                 appendToTextArea(name + " se ha unido.", Color.MAGENTA, Font.BOLD); // Mensaje de conexión
                 broadcast(name + " se ha conectado."); // Notificar a todos los clientes
+                broadcastAvailableUsers();
 
                 // Manejo de mensajes de los clientes
                 String message;
@@ -145,7 +157,10 @@ public class Server {
                             String privateMessage = message.substring(spaceIndex + 1);
                             sendPrivateMessage(targetName, name + " (privado): " + privateMessage);
                         }
-                    } else {
+                    } else if(message.equals("GET_AVAILABLE_USERS")){
+                        sendAvailableUsers();
+                    }
+                    else {
                         appendToTextArea(name + ": " + message, Color.BLACK, Font.PLAIN); // Mensaje normal
                         broadcast(name + ": " + message); // Reenviar mensaje a todos los clientes
                     }
@@ -167,6 +182,13 @@ public class Server {
                     writers.remove(out);
                 }
                 clientNames.remove(clientName);
+
+
+                synchronized ((availableUsers)){
+                    availableUsers.remove(clientName);
+                }
+                broadcastAvailableUsers();
+
             }
         }
 
@@ -180,6 +202,30 @@ public class Server {
                 out.println("El usuario " + targetName + " no está conectado.");
             }
         }
+
+        private void sendAvailableUsers() {
+            availableUsers.add("juan");
+            availableUsers.add("coco channel");
+            availableUsers.add("alex");
+            synchronized (availableUsers) {
+                StringBuilder userList = new StringBuilder("AVAILABLE_USERS:");
+                for (String user : availableUsers) {
+                    if (!user.equals(clientName)) {
+                        userList.append(user).append(",");
+                    }
+                }
+                out.println(userList.toString());
+            }
+        }
+
+        private void broadcastAvailableUsers() {
+            String userList;
+            synchronized (availableUsers) {
+                userList = "AVAILABLE_USERS:"+String.join(",", availableUsers);
+            }
+            broadcast(userList);
+        }
+
 
         // Método para enviar un mensaje a todos los clientes
         private void broadcast(String message) {
