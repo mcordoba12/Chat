@@ -1,16 +1,23 @@
 import org.w3c.dom.ls.LSOutput;
-
+import javax.sound.sampled.*;
 import javax.swing.*;
 import java.awt.*;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
 import java.io.*;
-import java.net.Socket;
+import java.net.*;
 import java.util.ArrayList;
 import java.util.List;
+
 
 public class Client {
     private static final String SERVER_IP = "127.0.0.1";
     private static final int PORT = 6789;
     private IncomingReader incomingReader; // Declaración de la variable
+    private boolean isInCall = false;
+    private boolean isMuted = false;
+    private DatagramSocket audioSocket;
+    private static final int AUDIO_PORT = 5000;
 
 
     private Socket socket;
@@ -24,6 +31,8 @@ public class Client {
     private JButton callButton; // Botón para llamar
     private JButton audioButton; // Botón para audio
     private String clientName;
+    private JFrame callFrame;
+    private JLabel callStatusLabel;
 
     private ArrayList<String> availableUsers = new ArrayList<>();
 
@@ -124,6 +133,10 @@ public class Client {
 
     private void makeCall() {
         // Implementa la lógica para hacer una llamada
+        if (isInCall) {
+            JOptionPane.showMessageDialog(frame, "You are already in a call.");
+            return;
+        }
 
        // openParticipantsPopup();
 
@@ -168,6 +181,7 @@ public class Client {
                 for (String user : selectedUsers) {
                     out.println("CALL_REQUEST:" + user);
                     JOptionPane.showMessageDialog(frame, "Calling " + user + "...");
+
                 }
             } else {
                 JOptionPane.showMessageDialog(frame, "No users selected.");
@@ -176,21 +190,134 @@ public class Client {
 
     }
 
-    public static void openParticipantsPopup(){ // para elegir a cuales personas quieres llamar
-        JFrame popupFrame = new JFrame("Select participants to call:");
-        popupFrame.setSize(300,500);
-        popupFrame.setLayout(new FlowLayout());
-
-        JLabel popupLabel = new JLabel("Select participants to call:");
-        popupFrame.add(popupLabel);
-
-       // this.out.println("getClientNames");
-       // Set<String> participants = Server.getClientNames();
+    private void openCallPopup(String caller){
 
 
+        int option = JOptionPane.showConfirmDialog(frame, caller
+                 + " is calling. Accept?", "Incoming Call",
+                JOptionPane.YES_NO_OPTION);
+
+        if (option == JOptionPane.YES_OPTION) {
+            this.out.println("CALL_ACCEPTED:" + caller);
+            startAudioCall();
+        } else {
+            this.out.println("CALL_REJECTED:" + caller);
+        }
+
+    }
+
+    private void startAudioCall() {
+        isInCall = true;
+        //showCallPopup();
+        SwingUtilities.invokeLater(this::createCallControlFrame);
+        try {
+            audioSocket = new DatagramSocket(AUDIO_PORT);
+            new Thread(this::captureAndSendAudio).start();
+            new Thread(this::receiveAndPlayAudio).start();
+        } catch (SocketException e) {
+            e.printStackTrace();
+        }
+    }
+
+
+    private void createCallControlFrame() {
+        callFrame = new JFrame("Call Control");
+        callFrame.setLayout(new GridLayout(2, 1));
+
+
+        // Mute button
+        JButton muteButton = new JButton("Mute");
+        muteButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                isMuted = !isMuted;
+                muteButton.setText(isMuted ? "Unmute" : "Mute");
+                toggleMute();
+            }
+        });
+
+        JButton hangUpButton = new JButton("Hang Up");
+        hangUpButton.addActionListener(e -> endCall());
+
+
+        callFrame.add(muteButton);
+        callFrame.add(hangUpButton);
+
+        callFrame.setSize(300, 300);
+        callFrame.setLocationRelativeTo(frame); // Center relative to main frame
+        callFrame.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
+        callFrame.setVisible(true);
+    }
+
+    private void toggleMute() {
+        // Logic to mute/unmute the audio
+        if (isMuted) {
+            System.out.println("Muted");
+        } else {
+            System.out.println("Unmuted");
+        }
+    }
+
+    private void receiveAndPlayAudio() {
+        try {
+            AudioFormat format = new AudioFormat(44100, 16, 2, true, true);
+            DataLine.Info info = new DataLine.Info(SourceDataLine.class, format);
+            SourceDataLine speakers = (SourceDataLine) AudioSystem.getLine(info);
+            speakers.open(format);
+            speakers.start();
+
+            byte[] buffer = new byte[1024];
+            while (isInCall) {
+                DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
+                audioSocket.receive(packet);
+                speakers.write(packet.getData(), 0, packet.getLength());
+            }
+
+            speakers.close();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+
+    private void endCall() {
+        isInCall = false;
+        if (audioSocket != null && !audioSocket.isClosed()) {
+            audioSocket.close();
+        }
+        out.println("END_CALL");
+        SwingUtilities.invokeLater(() -> {
+
+            if (callFrame != null) {
+                callFrame.dispose();
+                callFrame = null;
+            }
+        });
+        JOptionPane.showMessageDialog(frame, "Call ended");
+    }
 
 
 
+    private void captureAndSendAudio() {
+        try {
+            AudioFormat format = new AudioFormat(44100, 16, 2, true, true);
+            DataLine.Info info = new DataLine.Info(TargetDataLine.class, format);
+            TargetDataLine microphone = (TargetDataLine) AudioSystem.getLine(info);
+            microphone.open(format);
+            microphone.start();
+
+            byte[] buffer = new byte[1024];
+            while (isInCall) {
+                int bytesRead = microphone.read(buffer, 0, buffer.length);
+                DatagramPacket packet = new DatagramPacket(buffer, bytesRead,
+                        InetAddress.getByName(SERVER_IP), AUDIO_PORT);
+                audioSocket.send(packet);
+            }
+
+            microphone.close();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
     }
 
     private void sendAudio() {
@@ -240,16 +367,40 @@ public class Client {
                     System.out.printf("received message "+message);
                     if (message.startsWith("AVAILABLE_USERS:")) {
                         updateAvailableUSers(message.substring("AVAILABLE_USERS:".length()));
+                    } else if (message.startsWith("CALL_REQUEST:")){
+                        String caller = message.substring("CALL_REQUEST.".length());
+                        openCallPopup(caller);
+                    } else if (message.equals("CALL_ACCEPTED")) {
+                        startAudioCall();
+                    } else if (message.equals("CALL_REJECTED")) {
+                        JOptionPane.showMessageDialog(frame, "Call was rejected.");
+                    } else if (message.equals("END_CALL")) {
+                        handleCallEnded();
                     }
                     else if (!message.startsWith(clientName + ":")) {
                         displayMessage(message, false); // Mostrar mensajes de otros usuarios en el lado izquierdo
                     }
+
                 }
             } catch (IOException e) {
                 e.printStackTrace();
             } finally {
                 closeConnection(); // Cierra la ventana al desconectarse
             }
+        }
+
+        private void handleCallEnded() {
+            isInCall = false;
+            if (audioSocket != null) {
+                audioSocket.close();
+            }
+            SwingUtilities.invokeLater(() -> {
+                if (callFrame != null) {
+                    callFrame.dispose();
+                    callFrame = null;
+                }
+                JOptionPane.showMessageDialog(frame, "Call ended by the other party");
+            });
         }
 
         // Método para detener el hilo de lectura

@@ -13,6 +13,9 @@ public class Server {
     private static Set<String> clientNames = new HashSet<>(); // Para almacenar nombres de clientes
     private static Set<String> availableUsers = new HashSet<>();
 
+    private static Map<String, Socket> clientSockets = new HashMap<>();
+    private static Map<String, DatagramSocket> audioSockets = new HashMap<>();
+
     public static void main(String[] args) {
         int PORT = 6789;
 
@@ -159,6 +162,18 @@ public class Server {
                         }
                     } else if(message.equals("GET_AVAILABLE_USERS")){
                         sendAvailableUsers();
+                    }else if (message.startsWith("CALL_REQUEST:")) {
+                        String targetName = message.substring("CALL_REQUEST:".length());
+                        forwardCallRequest(targetName, clientName);
+                    } else if (message.startsWith("CALL_ACCEPTED:")) {
+                        String caller = message.substring("CALL_ACCEPTED:".length());
+                        notifyCallAccepted(caller);
+                        setupAudioRelay(clientName, caller);
+                    } else if (message.startsWith("CALL_REJECTED:")) {
+                        String caller = message.substring("CALL_REJECTED:".length());
+                        notifyCallRejected(caller);
+                    } else if (message.equals("END_CALL")) {
+                        endAudioRelay(clientName);
                     }
                     else {
                         appendToTextArea(name + ": " + message, Color.BLACK, Font.PLAIN); // Mensaje normal
@@ -192,6 +207,63 @@ public class Server {
             }
         }
 
+        private void forwardCallRequest(String targetName, String caller) {
+            PrintWriter targetWriter = clientWriters.get(targetName);
+            if (targetWriter != null) {
+                targetWriter.println("CALL_REQUEST:" + caller);
+            } else {
+                out.println("User " + targetName + " is not available.");
+            }
+        }
+
+        private void notifyCallAccepted(String caller) {
+            PrintWriter callerWriter = clientWriters.get(caller);
+            if (callerWriter != null) {
+                callerWriter.println("CALL_ACCEPTED");
+            }
+        }
+
+        private void notifyCallRejected(String caller) {
+            PrintWriter callerWriter = clientWriters.get(caller);
+            if (callerWriter != null) {
+                callerWriter.println("CALL_REJECTED");
+            }
+        }
+
+        private void setupAudioRelay(String client1, String client2) {
+            try {
+                DatagramSocket audioSocket1 = new DatagramSocket();
+                DatagramSocket audioSocket2 = new DatagramSocket();
+                audioSockets.put(client1, audioSocket1);
+                audioSockets.put(client2, audioSocket2);
+
+                new Thread(() -> relayAudio(audioSocket1, audioSocket2)).start();
+                new Thread(() -> relayAudio(audioSocket2, audioSocket1)).start();
+            } catch (SocketException e) {
+                e.printStackTrace();
+            }
+        }
+
+        private void relayAudio(DatagramSocket from, DatagramSocket to) {
+            byte[] buffer = new byte[1024];
+            while (true) {
+                try {
+                    DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
+                    from.receive(packet);
+                    to.send(packet);
+                } catch (IOException e) {
+                    break;
+                }
+            }
+        }
+
+        private void endAudioRelay(String client) {
+            DatagramSocket socket = audioSockets.remove(client);
+            if (socket != null) {
+                socket.close();
+            }
+        }
+
 
         // Método para enviar un mensaje a un cliente específico
         private void sendPrivateMessage(String targetName, String message) {
@@ -204,9 +276,6 @@ public class Server {
         }
 
         private void sendAvailableUsers() {
-            availableUsers.add("juan");
-            availableUsers.add("coco channel");
-            availableUsers.add("alex");
             synchronized (availableUsers) {
                 StringBuilder userList = new StringBuilder("AVAILABLE_USERS:");
                 for (String user : availableUsers) {
