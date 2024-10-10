@@ -10,6 +10,7 @@ public class Server {
     private static Set<PrintWriter> writers = new HashSet<>();
     private static JTextPane textArea;
     private static Map<String, PrintWriter> clientWriters = new HashMap<>();
+    private static Map<String, Socket> clientSockets = new HashMap<>();
     private static Set<String> clientNames = new HashSet<>();
 
     public static void main(String[] args) {
@@ -112,7 +113,7 @@ public class Server {
                         continue;
                     }
                     clientNames.add(name);
-                    clientName = name;
+                    clientSockets.put(name, socket);
                     break;
                 }
 
@@ -141,6 +142,23 @@ public class Server {
                         String audioBase64 = message.substring(6);
                         appendToTextArea(name + " ha enviado un audio.", Color.BLUE, Font.ITALIC);
                         broadcastExceptSender("AUDIO:" + audioBase64, out);
+                    } else if (message.startsWith("CALL:")) {
+                        String recipientName = message.substring(5);
+                        Socket recipientSocket = clientSockets.get(recipientName);
+                        if (recipientSocket != null) {
+                            // Crear un nuevo socket de audio para la llamada
+                            ServerSocket audioServerSocket = new ServerSocket(0); // Crear un ServerSocket para la llamada de audio
+                            int audioPort = audioServerSocket.getLocalPort();
+
+                            // Enviar el puerto al destinatario de la llamada
+                            PrintWriter recipientOut = new PrintWriter(recipientSocket.getOutputStream(), true);
+                            recipientOut.println("CALLPORT:" + audioPort);
+
+                            // Iniciar el manejo de la llamada de audio
+                            new Thread(new AudioCallHandler(audioServerSocket)).start();
+                        } else {
+                            out.println("El usuario " + recipientName + " no está disponible.");
+                        }
                     } else if (message.startsWith("@")) {
                         int spaceIndex = message.indexOf(' ');
                         if (spaceIndex > 1) {
@@ -201,6 +219,58 @@ public class Server {
                     if (writer != senderOut) {
                         writer.println(message);
                     }
+                }
+            }
+        }
+    }
+
+    // Clase para manejar las llamadas de audio
+    private static class AudioCallHandler implements Runnable {
+        private ServerSocket audioServerSocket;
+
+        public AudioCallHandler(ServerSocket audioServerSocket) {
+            this.audioServerSocket = audioServerSocket;
+        }
+
+        @Override
+        public void run() {
+            try {
+                Socket audioSocket = audioServerSocket.accept(); // Aceptar la conexión de audio
+                new Thread(new AudioStreamHandler(audioSocket)).start(); // Manejar el flujo de audio
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    // Clase para manejar el flujo de audio entre dos clientes
+    private static class AudioStreamHandler implements Runnable {
+        private Socket audioSocket;
+
+        public AudioStreamHandler(Socket audioSocket) {
+            this.audioSocket = audioSocket;
+        }
+
+        @Override
+        public void run() {
+            try {
+                InputStream inStream = audioSocket.getInputStream();
+                OutputStream outStream = audioSocket.getOutputStream();
+                byte[] buffer = new byte[4096];
+                int bytesRead;
+                while ((bytesRead = inStream.read(buffer)) != -1) {
+                    outStream.write(buffer, 0, bytesRead); // Transmitir el audio entre los clientes
+                    outStream.flush();
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
+            } finally {
+                try {
+                    if (audioSocket != null && !audioSocket.isClosed()) {
+                        audioSocket.close();
+                    }
+                } catch (IOException e) {
+                    e.printStackTrace();
                 }
             }
         }

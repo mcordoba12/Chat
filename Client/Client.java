@@ -2,9 +2,9 @@ import javax.sound.sampled.*;
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
 import java.io.*;
 import java.net.Socket;
+import java.net.ServerSocket;
 import java.util.Base64;
 
 public class Client {
@@ -25,6 +25,8 @@ public class Client {
     private String clientName;
     private AudioRecorder audioRecorder;
     private boolean isRecording = false; // Estado de grabación
+    private Socket audioSocket; // Socket de audio para la llamada
+    private ServerSocket audioServerSocket; // ServerSocket para aceptar la llamada entrante
 
     public Client() {
         // Configuración de la interfaz gráfica
@@ -124,27 +126,26 @@ public class Client {
     }
 
     private void makeCall() {
-        JOptionPane.showMessageDialog(frame, "Llamando a otro usuario...");
-        // Implementar lógica de llamada si es necesario
+        String recipientName = JOptionPane.showInputDialog(frame, "¿A quién deseas llamar?");
+        if (recipientName != null && !recipientName.trim().isEmpty()) {
+            // Envía una solicitud de llamada al servidor
+            out.println("CALL:" + recipientName);
+        }
     }
 
-    private void disconnect() {
-        System.out.println("Desconectando...");
-        try {
-            if (socket != null) {
-                out.println(clientName + " ha salido.");
-                incomingReader.isRunning = false;
-                socket.close();
-                System.out.println("Se cerró la conexión.");
+    private void startAudioCall() {
+        new Thread(() -> {
+            try {
+                audioServerSocket = new ServerSocket(0); // Crea un nuevo ServerSocket en un puerto aleatorio
+                out.println("CALLPORT:" + audioServerSocket.getLocalPort()); // Enviar el puerto al servidor
+                audioSocket = audioServerSocket.accept(); // Acepta la conexión de audio
+
+                // Iniciar transmisión de audio
+                new AudioCallHandler(audioSocket).startAudioCall();
+            } catch (IOException e) {
+                e.printStackTrace();
             }
-        } catch (IOException e) {
-            e.printStackTrace();
-        } finally {
-            SwingUtilities.invokeLater(() -> {
-                System.out.println("Cerrando ventana...");
-                frame.dispose();
-            });
-        }
+        }).start();
     }
 
     private void toggleRecording() {
@@ -203,12 +204,7 @@ public class Client {
                 playButton.setPreferredSize(new Dimension(50, 30));
 
                 // Agregar ActionListener para reproducir el audio cuando se haga clic
-                playButton.addActionListener(new ActionListener() {
-                    @Override
-                    public void actionPerformed(ActionEvent e) {
-                        playAudio(audioBase64);
-                    }
-                });
+                playButton.addActionListener(e -> playAudio(audioBase64));
 
                 // Añadir el botón al panel del mensaje
                 messageBubble.setBackground(new Color(240, 240, 240)); // Gris claro
@@ -297,6 +293,10 @@ public class Client {
                     if (message.startsWith("AUDIO:")) {
                         // Mensaje de audio
                         displayMessage(message, false);
+                    } else if (message.startsWith("CALLPORT:")) {
+                        int port = Integer.parseInt(message.substring(9));
+                        audioSocket = new Socket(SERVER_IP, port); // Conectar al puerto de la llamada
+                        new AudioCallHandler(audioSocket).startAudioCall();
                     } else {
                         // Mensajes de texto
                         if (!message.startsWith(clientName + ":")) {
@@ -307,19 +307,108 @@ public class Client {
             } catch (IOException e) {
                 e.printStackTrace();
             } finally {
-                closeConnection();
+                disconnect();
             }
         }
     }
 
+    private class AudioCallHandler {
+        private Socket audioSocket;
+        private AudioFormat format;
+
+        public AudioCallHandler(Socket socket) {
+            this.audioSocket = socket;
+            // Cambiamos el formato de audio a 44.1 kHz, 16 bits, mono, little-endian
+            this.format = new AudioFormat(44100, 16, 1, true, false); // 44.1 kHz, 16 bits, mono, little-endian
+        }
+
+        public void startAudioCall() {
+            // Transmisión de audio desde el micrófono al otro cliente
+            new Thread(() -> {
+                try {
+                    TargetDataLine microphone = AudioSystem.getTargetDataLine(format);
+                    microphone.open(format);
+                    microphone.start();
+
+                    OutputStream outStream = audioSocket.getOutputStream();
+                    byte[] buffer = new byte[4096]; // Buffer para los datos de audio
+                    while (!audioSocket.isClosed()) {
+                        int bytesRead = microphone.read(buffer, 0, buffer.length);
+                        if (bytesRead > 0) {
+                            outStream.write(buffer, 0, bytesRead); // Enviar el audio capturado
+                            outStream.flush();
+                        }
+                    }
+                } catch (IOException | LineUnavailableException e) {
+                    e.printStackTrace();
+                }
+            }).start();
+
+            // Recepción de audio desde el otro cliente y reproducción
+            new Thread(() -> {
+                try {
+                    SourceDataLine speakers = AudioSystem.getSourceDataLine(format);
+                    speakers.open(format);
+                    speakers.start();
+
+                    InputStream inStream = audioSocket.getInputStream();
+                    byte[] buffer = new byte[4096]; // Buffer para los datos de audio recibidos
+                    int bytesRead;
+                    while ((bytesRead = inStream.read(buffer)) != -1) {
+                        speakers.write(buffer, 0, bytesRead); // Reproducir el audio recibido
+                    }
+                } catch (IOException | LineUnavailableException e) {
+                    e.printStackTrace();
+                }
+            }).start();
+        }
+    }
+
+
+
     // Método para cerrar la conexión y la ventana
-    private void closeConnection() {
+    private void disconnect() {
+        System.out.println("Desconectando...");
         try {
-            socket.close();
+            // Cerrar el socket principal si está abierto
+            if (socket != null && !socket.isClosed()) {
+                socket.close();
+                System.out.println("Socket principal cerrado.");
+            }
+
+            // Cerrar el socket de audio si está abierto
+            if (audioSocket != null && !audioSocket.isClosed()) {
+                audioSocket.close();
+                System.out.println("Socket de audio cerrado.");
+            }
+
+            // Cerrar el ServerSocket de audio si está abierto
+            if (audioServerSocket != null && !audioServerSocket.isClosed()) {
+                audioServerSocket.close();
+                System.out.println("ServerSocket de audio cerrado.");
+            }
+
+            // Cerrar el BufferedReader (entrada)
+            if (in != null) {
+                in.close();
+                System.out.println("BufferedReader cerrado.");
+            }
+
+            // Cerrar el PrintWriter (salida)
+            if (out != null) {
+                out.close();
+                System.out.println("PrintWriter cerrado.");
+            }
+
         } catch (IOException e) {
             e.printStackTrace();
+        } finally {
+            // Cerrar la ventana del cliente
+            SwingUtilities.invokeLater(() -> {
+                System.out.println("Cerrando ventana del cliente...");
+                frame.dispose();
+            });
         }
-        frame.dispose();
     }
 
     public static void main(String[] args) {
